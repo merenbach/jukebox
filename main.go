@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"path"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -56,25 +55,18 @@ func (e Track) newerThan(s int64) bool {
 
 // A Playlist contains an ordered list of tracks to play.
 type Playlist struct {
-	Timeout    time.Duration `json:"timeout"`
-	Library    []string      `json:"library"`
-	inLibrary  map[string]struct{}
+	Timeout    time.Duration     `json:"timeout"`
+	Library    map[string]string `json:"library"`
 	tracks     []Track
 	tracksLock sync.RWMutex
 }
 
 // NewPlaylist creates a new Playlist with the given timeout.
-func NewPlaylist(ss []string, s int64) *Playlist {
-	inLibrary := make(map[string]struct{})
-	for _, s := range ss {
-		inLibrary[s] = struct{}{}
-	}
-
+func NewPlaylist(library map[string]string, s int64) *Playlist {
 	return &Playlist{
-		tracks:    []Track{},
-		Timeout:   time.Duration(s),
-		Library:   ss,
-		inLibrary: inLibrary,
+		tracks:  []Track{},
+		Timeout: time.Duration(s),
+		Library: library,
 	}
 }
 
@@ -98,7 +90,7 @@ func (p *Playlist) Prune() {
 
 // Append a new Track to the end of a Playlist.
 func (p *Playlist) Append(t Track) error {
-	if _, ok := p.inLibrary[t.Resource]; !ok {
+	if _, ok := p.Library[t.Resource]; !ok {
 		return errors.New("invalid track")
 	}
 
@@ -117,6 +109,20 @@ func (p *Playlist) Tracks() []Track {
 	p.tracksLock.RUnlock()
 
 	return tt
+}
+
+func (p *Playlist) Commands() []string {
+	ss := []string{}
+	for k := range p.Library {
+		ss = append(ss, k)
+	}
+
+	// Sort resources alphabetically.
+	sort.Slice(ss, func(i, j int) bool {
+		return ss[i] < ss[j]
+	})
+
+	return ss
 }
 
 /*
@@ -138,14 +144,9 @@ func (eq *EventQueue) Filtered() []Event {
 }*/
 
 // ServePlaylist runs an HTTP server with a playlist queue.
-func ServePlaylist(ss []string) {
+func ServePlaylist(library map[string]string) {
 
-	// library := make(map[string]string)
-	// for _, r := range rr {
-	// 	library[r] = "hello"
-	// }
-
-	playlist := NewPlaylist(ss, defaultExpireSeconds)
+	playlist := NewPlaylist(library, defaultExpireSeconds)
 
 	// [TODO]: Replace with a minute instead?
 	go func(p *Playlist) {
@@ -220,23 +221,18 @@ func ServePlaylist(ss []string) {
 		</head>
 		<body>`)
 
-		fmt.Fprint(w, "<div id=\"sounds\"></div>")
+		//fmt.Fprint(w, "<div id=\"sounds\"></div>")
 		fmt.Fprint(w, "<ul>")
-		for _, s := range ss {
+		for _, s := range playlist.Commands() {
 			// TODO: support multiple formats for same name??
 			fmt.Fprint(w, "<li>")
-			ext := path.Ext(s)
-			audioName := strings.TrimSuffix(s, ext)
 			//audioPath := path.Join("/sounds/", s)
-			//fmt.Fprintf(w, "<audio preload=\"auto\" src=\"%s\" id=\"audio_%s\"></audio>", audioPath, s)
-			fmt.Fprintf(w, "<button class=\"play-button\" id=\"button_%s\" data-sound=\"%s\">%s</button>", audioName, s, audioName)
+			fmt.Fprintf(w, "<audio preload=\"auto\" src=\"%s\" id=\"audio_%s\"></audio>", library[s], s)
+			fmt.Fprintf(w, "<button class=\"play-button\" data-sound=\"%s\">%s</button>", s, s)
 			fmt.Fprint(w, "</li>")
 		}
 		fmt.Fprint(w, "</ul>")
-		fmt.Fprint(w, `
-		<audio preload="auto" type="audio/mpeg" src="/sounds/56k.mp3" id="hello"></audio>
-		<button type="button" id="mybutton">Push</button>
-		<script type="text/javascript">
+		fmt.Fprint(w, `<script type="text/javascript">
 		(function() {
 			"use strict";
 
@@ -272,15 +268,16 @@ func ServePlaylist(ss []string) {
 					console.log(e);
 				})
 				.then(function(data) {
-					const sounds = document.getElementById("sounds");
+					//const sounds = document.getElementById("sounds");
 					for (var val of data) {
 						var rsrc = val.resource;
-						var audio = sounds.querySelector('[data-sound="' + rsrc + '"]');
+						var audio = document.getElementById('audio_' + rsrc);
+						/*var audio = sounds.querySelector('[data-sound="' + rsrc + '"]');
 						if (audio == null) {
 							audio = new Audio('/sounds/' + rsrc);
 							sounds.appendChild(audio);
 							audio.dataset.sound = rsrc;
-						}
+						}*/
 						console.log('Playing ' + rsrc);
 						audio.play();
 						
@@ -321,7 +318,16 @@ func ServePlaylist(ss []string) {
 
 // time.Now().Unix()
 func main() {
-	snddir := "sounds"
+	bb, err := ioutil.ReadFile("sounds.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var library map[string]string
+	json.Unmarshal(bb, &library)
+	fmt.Println(library)
+
+	/*snddir := "sounds"
 	files, err := ioutil.ReadDir(snddir)
 	if err != nil {
 		log.Fatal(err)
@@ -330,22 +336,7 @@ func main() {
 	library := []string{}
 	for _, file := range files {
 		library = append(library, file.Name())
-	}
-
-	// Sort resources alphabetically.
-	sort.Slice(library, func(i, j int) bool {
-		return library[i] < library[j]
-	})
+	}*/
 
 	ServePlaylist(library)
-
-	/*bb, err := ioutil.ReadFile("sounds.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var library map[string]string
-	json.Unmarshal(bb, &library)
-	fmt.Println(library)
-	*/
 }
