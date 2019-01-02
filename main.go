@@ -42,30 +42,31 @@ const defaultExpireSeconds = 5
 // 	Path string `json:"path"`
 // }
 
-// A Selection is a request to play something in the library.
-type Selection struct {
+// A TrackSelection is a request to play something in the library.
+type TrackSelection struct {
 	Resource  string `json:"resource"`
 	Timestamp int64  `json:"timestamp"`
 }
 
-// NewerThan determines if this Track is newer than a given number of seconds.
-func (s Selection) newerThan(ts int64) bool {
+// NewerThan determines if this track selection is newer than a given number of seconds.
+func (ts TrackSelection) newerThan(s int64) bool {
 	now := time.Now().Unix()
-	return now-s.Timestamp < ts
+	return now-ts.Timestamp < s
 }
 
 // A Playlist contains an ordered list of tracks to play.
+// A Playlist may have its selection expiration timeout changed at any time.
 type Playlist struct {
 	Timeout        time.Duration     `json:"timeout"`
 	Library        map[string]string `json:"library"`
-	selections     []Selection
+	selections     []TrackSelection
 	selectionsLock sync.RWMutex
 }
 
 // NewPlaylist creates a new Playlist with the given timeout.
 func NewPlaylist(library map[string]string, s int64) *Playlist {
 	return &Playlist{
-		selections: []Selection{},
+		selections: []TrackSelection{},
 		Timeout:    time.Duration(s),
 		Library:    library,
 	}
@@ -73,7 +74,7 @@ func NewPlaylist(library map[string]string, s int64) *Playlist {
 
 // Prune old items from the event queue.
 func (p *Playlist) Prune() {
-	fmt.Println("Pruning...")
+	log.Println("Pruning...")
 
 	p.selectionsLock.Lock()
 	tt := p.selections[:0]
@@ -83,14 +84,14 @@ func (p *Playlist) Prune() {
 			break
 		}
 	}
-	fmt.Println("Pruned to:", tt)
+	log.Println("Pruned to:", tt)
 	p.selections = tt
 
 	p.selectionsLock.Unlock()
 }
 
 // Append a new Track to the end of a Playlist.
-func (p *Playlist) Append(t Selection) error {
+func (p *Playlist) Append(t TrackSelection) error {
 	if _, ok := p.Library[t.Resource]; !ok {
 		return errors.New("invalid track")
 	}
@@ -102,10 +103,10 @@ func (p *Playlist) Append(t Selection) error {
 	return nil
 }
 
-// Tracks lists tracks in the playlist.
-func (p *Playlist) Tracks() []Selection {
+// Selections lists the current queue of track selections from the playlist.
+func (p *Playlist) Selections() []TrackSelection {
 	p.selectionsLock.RLock()
-	tt := make([]Selection, len(p.selections))
+	tt := make([]TrackSelection, len(p.selections))
 	copy(tt, p.selections)
 	p.selectionsLock.RUnlock()
 
@@ -181,12 +182,12 @@ func ServePlaylist(library map[string]string) {
 		}
 
 		resourceName := path.Base(r.URL.Path)
-		t := Selection{
+		t := TrackSelection{
 			Timestamp: time.Now().Unix(),
 			Resource:  resourceName,
 		}
 
-		fmt.Println("Requested to play track:", t)
+		log.Println("Requested to play track:", t)
 
 		err := playlist.Append(t)
 		if err != nil {
@@ -207,7 +208,7 @@ func ServePlaylist(library map[string]string) {
 			return
 		}
 
-		bb, err := json.Marshal(playlist.Tracks())
+		bb, err := json.Marshal(playlist.Selections())
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -330,9 +331,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var library map[string]string
-	json.Unmarshal(bb, &library)
-	fmt.Println(library)
+	var resources map[string]string
+	json.Unmarshal(bb, &resources)
+	log.Println("Initializing with the following resources:", resources)
 
 	/*snddir := "sounds"
 	files, err := ioutil.ReadDir(snddir)
@@ -345,5 +346,5 @@ func main() {
 		library = append(library, file.Name())
 	}*/
 
-	ServePlaylist(library)
+	ServePlaylist(resources)
 }
