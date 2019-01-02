@@ -13,8 +13,9 @@
 // limitations under the License.
 
 // TODO: support multiple audio formats and don't tightly couple to MP3
-// TODO: unique code id for sounds so we can put into "id" attribute instead of data attribute? or use for data anyway?
-// TOOD: how are we cleaning up sound names? can we read ID3 tags?? but what of wavs? trim extension?
+// TODO: emoji responses? handles for participants?
+// TODO: rename Playlist => Library?
+// TODO: replace Track nomenclature
 
 package main
 
@@ -45,11 +46,6 @@ const defaultExpireSeconds = 5
 type Selection struct {
 	Resource  string `json:"resource"`
 	Timestamp int64  `json:"timestamp"`
-}
-
-// ID returns a unique identifier for this selection. Algorithm subject to change.
-func (s Selection) ID() string {
-	return fmt.Sprintf("%d%s", s.Timestamp, s.Resource)
 }
 
 // NewerThan determines if this Track is newer than a given number of seconds.
@@ -263,7 +259,6 @@ func ServePlaylist(library map[string]string) {
 		(function() {
 			"use strict";
 
-
 			Array.from(document.getElementsByClassName("play")).forEach( (e) => e.addEventListener("click", function(event) {
 				event.preventDefault();
 				const snd = e.dataset.sound;
@@ -272,7 +267,6 @@ func ServePlaylist(library map[string]string) {
 				});
 			}, false));
 			
-			//var button = document.getElementById("mybutton");
 			window.setInterval(function() {
 				fetch('/playlist/')
 				.catch(function(e) {
@@ -288,7 +282,6 @@ func ServePlaylist(library map[string]string) {
 					console.log(e);
 				})
 				.then(function(data) {
-					//const sounds = document.getElementById("sounds");
 					for (var val of data) {
 						console.log("Evaluating whether to play " + JSON.stringify(val));
 						var audio = document.getElementById('audio_' + val.resource);
