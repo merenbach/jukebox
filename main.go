@@ -21,7 +21,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -42,31 +41,93 @@ const defaultExpireSeconds = 5
 // 	Path string `json:"path"`
 // }
 
-// A TrackSelection is a request to play something in the library.
-type TrackSelection struct {
-	Name      string `json:"name"`
-	Timestamp int64  `json:"timestamp"`
+// A TimestampElement goes into a TimestampQueue.
+type TimestampElement struct {
+
+	// The value stored with this element.
+	Value interface{} `json:"value"`
+
+	// The timestamp associated with this element.
+	Timestamp int64 `json:"timestamp"`
+}
+
+// NewTimestampElement creates a new timestamp element with the given contents.
+func newTimestampElement(v interface{}) *TimestampElement {
+	return &TimestampElement{
+		Timestamp: time.Now().Unix(),
+		Value:     v,
+	}
 }
 
 // Age of the track selection, in seconds.
-func (ts TrackSelection) age() int64 {
-	return time.Now().Unix() - ts.Timestamp
+func (te TimestampElement) Age() int64 {
+	return time.Now().Unix() - te.Timestamp
+}
+
+// A TimestampQueue holds timestamped elements. Push adds, pop removes expired.
+// A TimestampQueue supports having its timeout changed at any time.
+type TimestampQueue struct {
+	Timeout      int64 `json:"timeout"`
+	elements     []*TimestampElement
+	elementsLock sync.RWMutex
+}
+
+// NewTimestampQueue creates a new timestamp queue with the given timeout.
+func NewTimestampQueue(t int64) *TimestampQueue {
+	return &TimestampQueue{
+		Timeout:  t,
+		elements: []*TimestampElement{},
+	}
+}
+
+// Push an element on to the end of the queue.
+func (tq *TimestampQueue) Push(v interface{}) *TimestampElement {
+	e := newTimestampElement(v)
+
+	tq.elementsLock.Lock()
+	tq.elements = append(tq.elements, e)
+	tq.elementsLock.Unlock()
+
+	return e
+}
+
+// Pop expired elements off of the front of the queue.
+func (tq *TimestampQueue) Pop() []*TimestampElement {
+	tq.elementsLock.Lock()
+	ee := tq.elements[:0]
+	expired := make([]*TimestampElement, 0)
+	for i, e := range tq.elements {
+		if e.Age() < tq.Timeout {
+			ee = tq.elements[i:]
+			break
+		}
+	}
+	tq.elements = ee
+
+	tq.elementsLock.Unlock()
+
+	return expired
+}
+
+// Elements returns all elements in the queue, regardless of their expiry.
+func (tq *TimestampQueue) Elements() []*TimestampElement {
+	tq.elementsLock.RLock()
+	tt := make([]*TimestampElement, len(tq.elements))
+	copy(tt, tq.elements)
+	tq.elementsLock.RUnlock()
+	return tt
 }
 
 // A Playlist contains an ordered list of tracks to play.
-// A Playlist may have its selection expiration timeout changed at any time.
 type Playlist struct {
-	Timeout        int64             `json:"timeout"`
-	TrackLibrary   map[string]string `json:"library"`
-	selections     []TrackSelection
-	selectionsLock sync.RWMutex
+	TrackLibrary map[string]string `json:"library"`
+	selections   *TimestampQueue
 }
 
 // NewPlaylist creates a new Playlist with the given timeout.
 func NewPlaylist(library map[string]string, s int64) *Playlist {
 	return &Playlist{
-		selections:   []TrackSelection{},
-		Timeout:      s,
+		selections:   NewTimestampQueue(s),
 		TrackLibrary: library,
 	}
 }
@@ -74,42 +135,27 @@ func NewPlaylist(library map[string]string, s int64) *Playlist {
 // Prune old items from the event queue.
 func (p *Playlist) Prune() {
 	log.Println("Pruning...")
-
-	p.selectionsLock.Lock()
-	tt := p.selections[:0]
-	for i, e := range p.selections {
-		if e.age() < p.Timeout {
-			tt = p.selections[i:]
-			break
-		}
-	}
-	log.Println("Pruned to:", tt)
-	p.selections = tt
-
-	p.selectionsLock.Unlock()
+	pruned := p.selections.Pop()
+	log.Println("Pruned the following elements:", pruned)
 }
 
 // Append a new Track to the end of a Playlist.
-func (p *Playlist) Append(t TrackSelection) error {
-	if _, ok := p.TrackLibrary[t.Name]; !ok {
-		return errors.New("invalid track")
+func (p *Playlist) Append(t string) *TimestampElement {
+	if _, ok := p.TrackLibrary[t]; !ok {
+		log.Print("invalid track selection:", t)
+		return nil
 	}
 
-	p.selectionsLock.Lock()
-	p.selections = append(p.selections, t)
-	p.selectionsLock.Unlock()
+	e := p.selections.Push(t)
+	log.Println("Pushed the following element:", e)
 
-	return nil
+	return e
 }
 
 // Selections lists the current queue of track selections from the playlist.
-func (p *Playlist) Selections() []TrackSelection {
-	p.selectionsLock.RLock()
-	tt := make([]TrackSelection, len(p.selections))
-	copy(tt, p.selections)
-	p.selectionsLock.RUnlock()
-
-	return tt
+func (p *Playlist) Selections() []*TimestampElement {
+	el := p.selections.Elements()
+	return el
 }
 
 // Commands lists all available library entries.
@@ -181,15 +227,10 @@ func ServePlaylist(library map[string]string) {
 		}
 
 		resourceName := path.Base(r.URL.Path)
-		t := TrackSelection{
-			Timestamp: time.Now().Unix(),
-			Name:      resourceName,
-		}
+		log.Println("Requested to play track:", resourceName)
 
-		log.Println("Requested to play track:", t)
-
-		err := playlist.Append(t)
-		if err != nil {
+		t := playlist.Append(resourceName)
+		if t == nil {
 			http.NotFound(w, r)
 			return
 		}
@@ -284,7 +325,7 @@ func ServePlaylist(library map[string]string) {
 				.then(function(data) {
 					for (var val of data) {
 						console.log("Evaluating whether to play " + JSON.stringify(val));
-						var audio = document.getElementById('audio_' + val.name);
+						var audio = document.getElementById('audio_' + val.value);
 						if (val.timestamp > Number(audio.dataset.timestamp)) {
 							audio.dataset.timestamp = val.timestamp;
 							/*var audio = sounds.querySelector('[data-sound="' + rsrc + '"]');
@@ -293,10 +334,10 @@ func ServePlaylist(library map[string]string) {
 								sounds.appendChild(audio);
 								audio.dataset.sound = rsrc;
 							}*/
-							console.log('Playing ' + val.name);
+							console.log('Playing ' + val.value);
 							audio.play();
 						} else {
-							console.log("Already played selection " + val.name);
+							console.log("Already played selection " + val.value);
 						}
 					}
 				});
@@ -323,7 +364,6 @@ func ServePlaylist(library map[string]string) {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-// time.Now().Unix()
 func main() {
 	bb, err := ioutil.ReadFile("sounds.json")
 	if err != nil {
