@@ -44,21 +44,20 @@ const defaultExpireSeconds = 5
 
 // A TrackSelection is a request to play something in the library.
 type TrackSelection struct {
-	Resource  string `json:"resource"`
+	Name      string `json:"name"`
 	Timestamp int64  `json:"timestamp"`
 }
 
-// NewerThan determines if this track selection is newer than a given number of seconds.
-func (ts TrackSelection) newerThan(s int64) bool {
-	now := time.Now().Unix()
-	return now-ts.Timestamp < s
+// Age of the track selection, in seconds.
+func (ts TrackSelection) age() int64 {
+	return time.Now().Unix() - ts.Timestamp
 }
 
 // A Playlist contains an ordered list of tracks to play.
 // A Playlist may have its selection expiration timeout changed at any time.
 type Playlist struct {
-	Timeout        time.Duration     `json:"timeout"`
-	Library        map[string]string `json:"library"`
+	Timeout        int64             `json:"timeout"`
+	TrackLibrary   map[string]string `json:"library"`
 	selections     []TrackSelection
 	selectionsLock sync.RWMutex
 }
@@ -66,9 +65,9 @@ type Playlist struct {
 // NewPlaylist creates a new Playlist with the given timeout.
 func NewPlaylist(library map[string]string, s int64) *Playlist {
 	return &Playlist{
-		selections: []TrackSelection{},
-		Timeout:    time.Duration(s),
-		Library:    library,
+		selections:   []TrackSelection{},
+		Timeout:      s,
+		TrackLibrary: library,
 	}
 }
 
@@ -79,7 +78,7 @@ func (p *Playlist) Prune() {
 	p.selectionsLock.Lock()
 	tt := p.selections[:0]
 	for i, e := range p.selections {
-		if e.newerThan(int64(p.Timeout)) {
+		if e.age() < p.Timeout {
 			tt = p.selections[i:]
 			break
 		}
@@ -92,7 +91,7 @@ func (p *Playlist) Prune() {
 
 // Append a new Track to the end of a Playlist.
 func (p *Playlist) Append(t TrackSelection) error {
-	if _, ok := p.Library[t.Resource]; !ok {
+	if _, ok := p.TrackLibrary[t.Name]; !ok {
 		return errors.New("invalid track")
 	}
 
@@ -116,7 +115,7 @@ func (p *Playlist) Selections() []TrackSelection {
 // Commands lists all available library entries.
 func (p *Playlist) Commands() []string {
 	ss := []string{}
-	for k := range p.Library {
+	for k := range p.TrackLibrary {
 		ss = append(ss, k)
 	}
 
@@ -167,7 +166,7 @@ func ServePlaylist(library map[string]string) {
 			return
 		}
 
-		bb, err := json.Marshal(playlist.Library)
+		bb, err := json.Marshal(playlist.TrackLibrary)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -184,7 +183,7 @@ func ServePlaylist(library map[string]string) {
 		resourceName := path.Base(r.URL.Path)
 		t := TrackSelection{
 			Timestamp: time.Now().Unix(),
-			Resource:  resourceName,
+			Name:      resourceName,
 		}
 
 		log.Println("Requested to play track:", t)
@@ -285,7 +284,7 @@ func ServePlaylist(library map[string]string) {
 				.then(function(data) {
 					for (var val of data) {
 						console.log("Evaluating whether to play " + JSON.stringify(val));
-						var audio = document.getElementById('audio_' + val.resource);
+						var audio = document.getElementById('audio_' + val.name);
 						if (val.timestamp > Number(audio.dataset.timestamp)) {
 							audio.dataset.timestamp = val.timestamp;
 							/*var audio = sounds.querySelector('[data-sound="' + rsrc + '"]');
@@ -294,10 +293,10 @@ func ServePlaylist(library map[string]string) {
 								sounds.appendChild(audio);
 								audio.dataset.sound = rsrc;
 							}*/
-							console.log('Playing ' + val.resource);
+							console.log('Playing ' + val.name);
 							audio.play();
 						} else {
-							console.log("Already played selection " + val.resource);
+							console.log("Already played selection " + val.name);
 						}
 					}
 				});
