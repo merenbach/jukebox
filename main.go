@@ -263,21 +263,14 @@ func ServePlaylist(library map[string]string) {
 		(function() {
 			"use strict";
 
-			function setupLibrary() {
-				var els = document.getElementsByClassName("play");
-				for (var i = 0; i < els.length; i++) {
-					const element = els[i];
-					element.addEventListener("click", function(event) {
-						event.preventDefault();
-						const snd = element.dataset.sound;
-						fetch('/play/' + snd, {
-							method: "POST",
-						});
-			   		}, false);
-				}
-			}
 
-			setupLibrary();
+			Array.from(document.getElementsByClassName("play")).forEach( (e) => e.addEventListener("click", function(event) {
+				event.preventDefault();
+				const snd = e.dataset.sound;
+				fetch('/play/' + snd, {
+					method: "POST",
+				});
+			}, false));
 			
 			//var button = document.getElementById("mybutton");
 			window.setInterval(function() {
