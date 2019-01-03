@@ -92,13 +92,15 @@ func (sq *StringQueue) ShiftMany(i int) []string {
 // A BatchStringQueue is a thread-safe queue of strings that
 type BatchStringQueue struct {
 	*StringQueue
-	lastBatchSize int
+	lastBatchSize      int
+	lastBatchTimestamp int64
 }
 
 // ShiftBatch shifts the last batch count. Repeating the operation twice in a row will empty the queue.
 func (sq *BatchStringQueue) ShiftBatch() []string {
 	els := sq.ShiftMany(sq.lastBatchSize)
 	sq.lastBatchSize = sq.Count()
+	sq.lastBatchTimestamp = time.Now().Unix()
 	return els
 }
 
@@ -144,9 +146,9 @@ func (p *Playlist) Append(t string) string {
 }
 
 // Selections lists the current queue of track selections from the playlist.
-func (p *Playlist) Selections() []string {
+func (p *Playlist) Selections() (int64, []string) {
 	el := p.selections.Elements()
-	return el
+	return p.selections.lastBatchTimestamp, el
 }
 
 // Commands lists all available library entries.
@@ -239,7 +241,15 @@ func ServePlaylist(library map[string]string) {
 			return
 		}
 
-		bb, err := json.Marshal(playlist.Selections())
+		ts, sels := playlist.Selections()
+		playlistData := struct {
+			Timestamp  int64    `json:"timestamp"`
+			Selections []string `json:"selections"`
+		}{
+			Timestamp:  ts,
+			Selections: sels,
+		}
+		bb, err := json.Marshal(playlistData)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -315,11 +325,14 @@ func ServePlaylist(library map[string]string) {
 				})
 				.then(function(data) {
 					//console.log("Running over everything...")
-					for (var val of data) {
+					var ts = data.timestamp;
+					var sels = data.selections;
+					console.log("ts = " + ts + " and sels = " + sels);
+					for (var val of sels) {
 						console.log("Evaluating whether to play " + JSON.stringify(val));
 						var audio = document.getElementById('audio_' + val);
-						//if (val.timestamp > Number(audio.dataset.timestamp)) {
-							audio.dataset.timestamp = 0;
+						if (ts > Number(audio.dataset.timestamp)) {
+							audio.dataset.timestamp = ts;
 							/*var audio = sounds.querySelector('[data-sound="' + rsrc + '"]');
 							if (audio == null) {
 								audio = new Audio('/sounds/' + rsrc);
@@ -328,9 +341,9 @@ func ServePlaylist(library map[string]string) {
 							}*/
 							console.log('Playing ' + val);
 							audio.play();
-						//} else {
-						//	console.log("Already played selection " + val);
-						//}
+						} else {
+							console.log("Already played selection " + val);
+						}
 					}
 				});
 			}, 100);
