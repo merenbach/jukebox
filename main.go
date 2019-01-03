@@ -41,93 +41,84 @@ const defaultExpireSeconds = 5
 // 	Path string `json:"path"`
 // }
 
-// A TimestampElement goes into a TimestampQueue.
-type TimestampElement struct {
-
-	// The value stored with this element.
-	Value interface{} `json:"value"`
-
-	// The timestamp associated with this element.
-	Timestamp int64 `json:"timestamp"`
-}
-
-// NewTimestampElement creates a new timestamp element with the given contents.
-func newTimestampElement(v interface{}) *TimestampElement {
-	return &TimestampElement{
-		Timestamp: time.Now().Unix(),
-		Value:     v,
-	}
-}
-
-// Age of the track selection, in seconds.
-func (te TimestampElement) Age() int64 {
-	return time.Now().Unix() - te.Timestamp
-}
-
-// A TimestampQueue holds timestamped elements. Push adds, pop removes expired.
-// A TimestampQueue supports having its timeout changed at any time.
-type TimestampQueue struct {
-	Timeout      int64 `json:"timeout"`
-	elements     []*TimestampElement
+// A StringQueue is a thread-safe queue of strings.
+type StringQueue struct {
+	elements     []string
 	elementsLock sync.RWMutex
 }
 
-// NewTimestampQueue creates a new timestamp queue with the given timeout.
-func NewTimestampQueue(t int64) *TimestampQueue {
-	return &TimestampQueue{
-		Timeout:  t,
-		elements: []*TimestampElement{},
+// NewStringQueue returns a new StringQueue struct pointer.
+func NewStringQueue() *StringQueue {
+	return &StringQueue{
+		elements: []string{},
 	}
 }
 
-// Push an element on to the end of the queue.
-func (tq *TimestampQueue) Push(v interface{}) *TimestampElement {
-	e := newTimestampElement(v)
+// Elements in the queue.
+func (sq *StringQueue) Elements() []string {
+	sq.elementsLock.RLock()
+	defer sq.elementsLock.RUnlock()
 
-	tq.elementsLock.Lock()
-	tq.elements = append(tq.elements, e)
-	tq.elementsLock.Unlock()
-
-	return e
+	return sq.elements
 }
 
-// Pop expired elements off of the front of the queue.
-func (tq *TimestampQueue) Pop() []*TimestampElement {
-	tq.elementsLock.Lock()
-	ee := tq.elements[:0]
-	expired := make([]*TimestampElement, 0)
-	for i, e := range tq.elements {
-		if e.Age() < tq.Timeout {
-			ee = tq.elements[i:]
-			break
-		}
+// Count the number of elements in the queue.
+func (sq *StringQueue) Count() int {
+	sq.elementsLock.RLock()
+	defer sq.elementsLock.RUnlock()
+
+	return len(sq.elements)
+}
+
+// Push an element on to the end of the queue and return it.
+func (sq *StringQueue) Push(s string) string {
+	sq.elementsLock.Lock()
+	defer sq.elementsLock.Unlock()
+
+	sq.elements = append(sq.elements, s)
+	return s
+}
+
+// ShiftMany pops the given number of elements from the front of the queue and returns them.
+func (sq *StringQueue) ShiftMany(i int) []string {
+	sq.elementsLock.Lock()
+	defer sq.elementsLock.Unlock()
+
+	popped, remaining := sq.elements[:i], sq.elements[i:]
+	sq.elements = remaining
+	return popped
+}
+
+// A BatchStringQueue is a thread-safe queue of strings that
+type BatchStringQueue struct {
+	*StringQueue
+	lastBatchSize int
+}
+
+// ShiftBatch shifts the last batch count. Repeating the operation twice in a row will empty the queue.
+func (sq *BatchStringQueue) ShiftBatch() []string {
+	els := sq.ShiftMany(sq.lastBatchSize)
+	sq.lastBatchSize = sq.Count()
+	return els
+}
+
+// NewBatchStringQueue returns a new StringQueue struct pointer.
+func NewBatchStringQueue() *BatchStringQueue {
+	return &BatchStringQueue{
+		StringQueue: NewStringQueue(),
 	}
-	tq.elements = ee
-
-	tq.elementsLock.Unlock()
-
-	return expired
-}
-
-// Elements returns all elements in the queue, regardless of their expiry.
-func (tq *TimestampQueue) Elements() []*TimestampElement {
-	tq.elementsLock.RLock()
-	tt := make([]*TimestampElement, len(tq.elements))
-	copy(tt, tq.elements)
-	tq.elementsLock.RUnlock()
-	return tt
 }
 
 // A Playlist contains an ordered list of tracks to play.
 type Playlist struct {
 	TrackLibrary map[string]string `json:"library"`
-	selections   *TimestampQueue
+	selections   *BatchStringQueue
 }
 
 // NewPlaylist creates a new Playlist with the given timeout.
 func NewPlaylist(library map[string]string, s int64) *Playlist {
 	return &Playlist{
-		selections:   NewTimestampQueue(s),
+		selections:   NewBatchStringQueue(),
 		TrackLibrary: library,
 	}
 }
@@ -135,15 +126,15 @@ func NewPlaylist(library map[string]string, s int64) *Playlist {
 // Prune old items from the event queue.
 func (p *Playlist) Prune() {
 	log.Println("Pruning...")
-	pruned := p.selections.Pop()
+	pruned := p.selections.ShiftBatch()
 	log.Println("Pruned the following elements:", pruned)
 }
 
 // Append a new Track to the end of a Playlist.
-func (p *Playlist) Append(t string) *TimestampElement {
+func (p *Playlist) Append(t string) string {
 	if _, ok := p.TrackLibrary[t]; !ok {
 		log.Print("invalid track selection:", t)
-		return nil
+		return ""
 	}
 
 	e := p.selections.Push(t)
@@ -153,7 +144,7 @@ func (p *Playlist) Append(t string) *TimestampElement {
 }
 
 // Selections lists the current queue of track selections from the playlist.
-func (p *Playlist) Selections() []*TimestampElement {
+func (p *Playlist) Selections() []string {
 	el := p.selections.Elements()
 	return el
 }
@@ -198,7 +189,7 @@ func ServePlaylist(library map[string]string) {
 
 	// [TODO]: Replace with a minute instead?
 	go func(p *Playlist) {
-		ticker := time.NewTicker(time.Second)
+		ticker := time.NewTicker(time.Second * defaultExpireSeconds)
 		defer ticker.Stop()
 
 		for range ticker.C {
@@ -230,7 +221,7 @@ func ServePlaylist(library map[string]string) {
 		log.Println("Requested to play track:", resourceName)
 
 		t := playlist.Append(resourceName)
-		if t == nil {
+		if t == "" {
 			http.NotFound(w, r)
 			return
 		}
@@ -323,22 +314,23 @@ func ServePlaylist(library map[string]string) {
 					console.log(e);
 				})
 				.then(function(data) {
+					//console.log("Running over everything...")
 					for (var val of data) {
 						console.log("Evaluating whether to play " + JSON.stringify(val));
-						var audio = document.getElementById('audio_' + val.value);
-						if (val.timestamp > Number(audio.dataset.timestamp)) {
-							audio.dataset.timestamp = val.timestamp;
+						var audio = document.getElementById('audio_' + val);
+						//if (val.timestamp > Number(audio.dataset.timestamp)) {
+							audio.dataset.timestamp = 0;
 							/*var audio = sounds.querySelector('[data-sound="' + rsrc + '"]');
 							if (audio == null) {
 								audio = new Audio('/sounds/' + rsrc);
 								sounds.appendChild(audio);
 								audio.dataset.sound = rsrc;
 							}*/
-							console.log('Playing ' + val.value);
+							console.log('Playing ' + val);
 							audio.play();
-						} else {
-							console.log("Already played selection " + val.value);
-						}
+						//} else {
+						//	console.log("Already played selection " + val);
+						//}
 					}
 				});
 			}, 100);
