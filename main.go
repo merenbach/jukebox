@@ -24,7 +24,6 @@
 // TODO: better log/history display in browser, plus status messages about joins/leaves--and don't try to play those...
 // TODO: Lambda to run? Accept URI for sound library...
 // TODO: different rooms, namespaced to allow multiple "conversations"
-// TODO: don't allow concurrent playback--can we make browser wait for playback to finish?
 // TODO: Slack integration
 // TODO: dedicated client app to submit?
 // NOTE: portions based heavily on https://github.com/gorilla/websocket/tree/master/examples/chat
@@ -300,6 +299,28 @@ window.onload = function () {
 	});
 	////<<
 
+
+	var PLAY_QUEUE = [];
+	var PLAYING = false;
+
+	window.setInterval(function() {
+		if (!PLAYING && PLAY_QUEUE.length > 0) {
+			var NEXT_UP = PLAY_QUEUE.shift();
+			console.log("Okay, NEXT UP is: " + NEXT_UP);
+			const selections = document.getElementById('selections');
+			var audio = selections.querySelector('audio[data-sound="' + NEXT_UP + '"]');
+			if (audio != null) {
+				audio.onplay = function() {
+					PLAYING = true;
+				}
+				audio.onended = function() {
+					PLAYING = false;
+				}
+				audio.play();
+			}
+		}
+	}, 100);
+	
     if (window["WebSocket"]) {
 		conn = new WebSocket("ws://" + document.location.host + "/ws");
 
@@ -314,13 +335,15 @@ window.onload = function () {
             for (var i = 0; i < messages.length; i++) {
 
 				var rsrc = messages[i];
-				var selections = document.getElementById('selections');
-			var audio = selections.querySelector('audio[data-sound="' + rsrc + '"]');
+				PLAY_QUEUE.push(rsrc);
+				
+			// const selections = document.getElementById('selections');
+			// var audio = selections.querySelector('audio[data-sound="' + rsrc + '"]');
 			/*if (audio == null) {
 				audio = new Audio(rsrc);
 				sounds.appendChild(audio);
 			}*/
-			audio.play();
+			// audio.play();
 			/*try {
 			audio.play();
 			} catch (err) {
