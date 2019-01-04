@@ -15,6 +15,13 @@
 // TODO: emoji responses? handles for participants?
 // TODO: replace Track nomenclature
 // TODO: revamp fault tolerance (invalid sound, etc.)
+// TODO: better log/history display in browser, plus status messages about joins/leaves--and don't try to play those...
+// TODO: Lambda to run? Accept URI for sound library...
+// TODO: different rooms, namespaced to allow multiple "conversations"
+// TODO: don't allow concurrent playback--can we make browser wait for playback to finish?
+// TODO: rename to "Sound Machine"?
+// TODO: Slack integration
+// TODO: client API, or poss. dedicated client app? (API is probably more universally compatible and useful)
 
 package main
 
@@ -237,18 +244,18 @@ var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
 <script type="text/javascript">
 window.onload = function () {
     var conn;
-    /*var msg = document.getElementById("msg");
+    //var msg = document.getElementById("msg");
     var log = document.getElementById("log");
 
     function appendLog(item) {
-        var doScroll = log.scrollTop > log.scrollHeight - log.clientHeight - 1;
+        //var doScroll = log.scrollTop > log.scrollHeight - log.clientHeight - 1;
         log.appendChild(item);
-        if (doScroll) {
+        /*if (doScroll) {
             log.scrollTop = log.scrollHeight - log.clientHeight;
-        }
+        }*/
     }
 
-    document.getElementById("form").onsubmit = function () {
+    /*document.getElementById("form").onsubmit = function () {
         if (!conn) {
             return false;
         }
@@ -279,7 +286,7 @@ window.onload = function () {
         conn.onclose = function (evt) {
             var item = document.createElement("div");
             item.innerHTML = "<b>Connection closed.</b>";
-            //appendLog(item);
+            appendLog(item);
         };
         conn.onmessage = function (evt) {
 			var messages = evt.data.split('\n');
@@ -300,15 +307,15 @@ window.onload = function () {
 				console.log("Could not play sound: " + err)
 			}*/
 
-               // var item = document.createElement("div");
-                //item.innerText = messages[i];
-                //appendLog(item);
+                var item = document.createElement("div");
+                item.innerText = messages[i];
+                appendLog(item);
             }
         };
     } else {
         var item = document.createElement("div");
         item.innerHTML = "<b>Your browser does not support WebSockets.</b>";
-        //appendLog(item);
+        appendLog(item);
     }
 };
 </script>
@@ -355,5 +362,6 @@ body {
  </li>
 {{end}}
 </ul>
+<div id="log"></div>
 </body>
 </html>`))
