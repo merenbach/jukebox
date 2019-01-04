@@ -16,6 +16,7 @@
 // TODO: emoji responses? handles for participants?
 // TODO: rename Playlist => Library?
 // TODO: replace Track nomenclature
+// TODO: revamp fault tolerance (invalid sound, etc.)
 
 package main
 
@@ -258,170 +259,7 @@ func ServePlaylist(library map[string]string) {
 		fmt.Fprintf(w, "%s", bb)
 	})
 
-	http.HandleFunc("/abcdefg", func(w http.ResponseWriter, r *http.Request) {
-		//<link href="https://necolas.github.io/normalize.css/8.0.1/normalize.css" rel="stylesheet">
-		fmt.Fprint(w, `<!DOCTYPE html>
-		<html lang="en">
-		<head>
-		<meta charset="utf-8">
-		<title>Jukebox</title>
-		<style>
-			body {
-				background-color: #333;
-				color: #ccc;
-			}
-
-			#selections {
-				padding-left: 0;
-			}
-
-			#selections .selection {
-				display: inline-block;
-				padding: .25em .5em;
-			}
-
-			#selections .play {
-				color: #8f8;
-			}
-		</style>
-		</head>
-		<body>
-			<h1>Jukebox</h1>
-			<p>Play sounds for everyone who has this page loaded!</p>
-		`)
-
-		//fmt.Fprint(w, "<div id=\"sounds\"></div>")
-		fmt.Fprint(w, "<ul id=\"selections\">")
-		for _, s := range playlist.Commands() {
-			fmt.Fprint(w, "<li class=\"selection\">")
-			fmt.Fprintf(w, "<a class=\"play\" data-sound=\"%s\" href=\"#\">%s</a>", s, s)
-			fmt.Fprintf(w, "<audio preload=\"auto\" src=\"%s\" id=\"audio_%s\" data-timestamp=\"\">Your browser does not support the <code>audio</code> element.</audio>", library[s], s)
-			fmt.Fprint(w, "</li>")
-		}
-		fmt.Fprint(w, "</ul>")
-		fmt.Fprint(w, `<script>
-		//(function() {
-		//	"use strict";
-
-			
-		  function configOld() {
-
-			Array.from(document.getElementsByClassName("play")).forEach( (e) => e.addEventListener("click", function(event) {
-				event.preventDefault();
-				const snd = e.dataset.sound;
-				fetch('/play/' + snd, {
-					method: "POST",
-				});
-			}, false));
-
-			window.setInterval(function() {
-				fetch('/playlist/')
-				.catch(function(e) {
-					console.log(e);
-				})
-				.then(function(response) {
-					if (response.ok) {
-						return response.json();
-					}
-					throw new Error(response.statusText);
-				})
-				.catch(function(e) {
-					console.log(e);
-				})
-				.then(function(data) {
-					//console.log("Running over everything...")
-					var ts = data.timestamp;
-					var sels = data.selections;
-					console.log("ts = " + ts + " and sels = " + sels);
-					for (var val of sels) {
-						console.log("Evaluating whether to play " + JSON.stringify(val));
-						var audio = document.getElementById('audio_' + val);
-						if (ts > Number(audio.dataset.timestamp)) {
-							audio.dataset.timestamp = ts;
-							/*var audio = sounds.querySelector('[data-sound="' + rsrc + '"]');
-							if (audio == null) {
-								audio = new Audio('/sounds/' + rsrc);
-								sounds.appendChild(audio);
-								audio.dataset.sound = rsrc;
-							}*/
-							console.log('Playing ' + val);
-							audio.play();
-						} else {
-							console.log("Already played selection " + val);
-						}
-					}
-				});
-			}, 100);
-		  }
-		//})();
-
-		window.addEventListener("load", function(evt) {
-			var output = document.getElementById("output");
-			var input = document.getElementById("input");
-			var ws;
-			var print = function(message) {
-				var d = document.createElement("div");
-				d.innerHTML = message;
-				output.appendChild(d);
-			};
-			document.getElementById("open").onclick = function(evt) {
-				if (ws) {
-					return false;
-				}
-				ws = new WebSocket("{{.}}");
-				ws.onopen = function(evt) {
-					print("OPEN");
-				}
-				ws.onclose = function(evt) {
-					print("CLOSE");
-					ws = null;
-				}
-				ws.onmessage = function(evt) {
-					print("RESPONSE: " + evt.data);
-				}
-				ws.onerror = function(evt) {
-					print("ERROR: " + evt.data);
-				}
-				return false;
-			};
-			document.getElementById("send").onclick = function(evt) {
-				if (!ws) {
-					return false;
-				}
-				print("SEND: " + input.value);
-				ws.send(input.value);
-				return false;
-			};
-			document.getElementById("close").onclick = function(evt) {
-				if (!ws) {
-					return false;
-				}
-				ws.close();
-				return false;
-			};
-		});
-		
-		</script>
-
-		<table>
-<tr><td valign="top" width="50%">
-<p>Click "Open" to create a connection to the server, 
-"Send" to send a message to the server and "Close" to close the connection. 
-You can change the message and send multiple times.
-<p>
-<form>
-<button id="open">Open</button>
-<button id="close">Close</button>
-<p><input id="input" type="text" value="Hello world!">
-<button id="send">Send</button>
-</form>
-</td><td valign="top" width="50%">
-<div id="output"></div>
-</td></tr></table>
-
-		</body>
-		</html>`)
-	})
+	//<link href="https://necolas.github.io/normalize.css/8.0.1/normalize.css" rel="stylesheet">
 
 	// TODO: set timeouts, max header bytes!
 	// s := &http.Server{
@@ -530,11 +368,11 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 func home(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		Url      string
-		Commands []string
+		Commands map[string]string
 	}{
 		// TODO: allow connecting to arbitrary sound machines!
 		//Url:      "ws://" + r.Host + "/ws",
-		Commands: playlist.Commands(),
+		Commands: playlist.TrackLibrary,
 	}
 	homeTemplate.Execute(w, data)
 }
@@ -619,17 +457,19 @@ window.onload = function () {
 
             for (var i = 0; i < messages.length; i++) {
 
-				var rsrc = "/sounds/" + messages[i] + ".mp3";
-			var audio = sounds.querySelector('[src="' + rsrc + '"]');
-			if (audio == null) {
+				var rsrc = messages[i];
+				var selections = document.getElementById('selections');
+			var audio = selections.querySelector('audio[data-sound="' + rsrc + '"]');
+			/*if (audio == null) {
 				audio = new Audio(rsrc);
 				sounds.appendChild(audio);
-			}
-			try {
+			}*/
+			audio.play();
+			/*try {
 			audio.play();
 			} catch (err) {
 				console.log("Could not play sound: " + err)
-			}
+			}*/
 
                // var item = document.createElement("div");
                 //item.innerText = messages[i];
@@ -705,133 +545,13 @@ body {
     <input type="submit" value="Send" />
     <input type="text" id="msg" size="64"/>
 </form>
-<div id="sounds"></div>
 <ul id="selections">
-{{range .Commands }}
+{{range $k, $v := .Commands }}
  <li class="selection">
-	<a class="play" data-sound="{{.}}" href="#">{{.}}</a>
+	<a class="play" data-sound="{{$k}}" href="#">{{$k}}</a>
+	<audio preload="auto" src="{{$v}}" data-sound="{{$k}}">Your browser does not support the <code>audio</code> element.</audio>
  </li>
 {{end}}
 </ul>
 </body>
 </html>`))
-
-var homeTemplate2 = template.Must(template.New("").Parse(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<style>
-			body {
-				background-color: #333;
-				color: #ccc;
-			}
-
-			#selections {
-				padding-left: 0;
-			}
-
-			#selections .selection {
-				display: inline-block;
-				padding: .25em .5em;
-			}
-
-			#selections .play {
-				color: #8f8;
-			}
-		</style>
-<script>  
-window.addEventListener("load", function(evt) {
-    var output = document.getElementById("output");
-    var input = document.getElementById("input");
-    var ws;
-    var print = function(message) {
-        var d = document.createElement("div");
-        d.innerHTML = message;
-        output.appendChild(d);
-    };
-    document.getElementById("open").onclick = function(evt) {
-        if (ws) {
-            return false;
-        }
-        ws = new WebSocket("{{.Url}}");
-        ws.onopen = function(evt) {
-            print("OPEN");
-        }
-        ws.onclose = function(evt) {
-            print("CLOSE");
-            ws = null;
-        }
-        ws.onmessage = function(evt) {
-			print("RESPONSE: " + evt.data);
-			/////>>
-			var rsrc = evt.data;
-			var audio = sounds.querySelector('[src="' + rsrc + '"]');
-			if (audio == null) {
-				audio = new Audio(rsrc);
-				sounds.appendChild(audio);
-			}
-			audio.play();
-
-			/////<<
-        }
-        ws.onerror = function(evt) {
-            print("ERROR: " + evt.data);
-        }
-        return false;
-	};
-	Array.from(document.getElementsByClassName("play")).forEach( (e) => e.addEventListener("click", function(event) {
-		event.preventDefault();
-		if (!ws) {
-            return false;
-		}
-		input.value = e.dataset.sound;
-        print("SEND: " + input.value);
-        ws.send(input.value);
-        return false;
-	}, false));
-    document.getElementById("send").onclick = function(evt) {
-        if (!ws) {
-            return false;
-        }
-        print("SEND: " + input.value);
-        ws.send(input.value);
-        return false;
-    };
-    document.getElementById("close").onclick = function(evt) {
-        if (!ws) {
-            return false;
-        }
-        ws.close();
-        return false;
-    };
-});
-</script>
-</head>
-<body>
-<div id="sounds"></div>
-<ul id="selections">
-{{range .Commands }}
- <li class="selection">
-	<a class="play" data-sound="{{.}}" href="#">{{.}}</a>
- </li>
-{{end}}
-</ul>
-<table>
-<tr><td valign="top" width="50%">
-<p>Click "Open" to create a connection to the server, 
-"Send" to send a message to the server and "Close" to close the connection. 
-You can change the message and send multiple times.
-<p>
-<form>
-<button id="open">Open</button>
-<button id="close">Close</button>
-<p><input id="input" type="text" value="Hello world!">
-<button id="send">Send</button>
-</form>
-</td><td valign="top" width="50%">
-<div id="output"></div>
-</td></tr></table>
-</body>
-</html>
-`))
