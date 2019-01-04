@@ -21,7 +21,9 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
+	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -256,7 +258,7 @@ func ServePlaylist(library map[string]string) {
 		fmt.Fprintf(w, "%s", bb)
 	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/abcdefg", func(w http.ResponseWriter, r *http.Request) {
 		//<link href="https://necolas.github.io/normalize.css/8.0.1/normalize.css" rel="stylesheet">
 		fmt.Fprint(w, `<!DOCTYPE html>
 		<html lang="en">
@@ -298,8 +300,11 @@ func ServePlaylist(library map[string]string) {
 		}
 		fmt.Fprint(w, "</ul>")
 		fmt.Fprint(w, `<script>
-		(function() {
-			"use strict";
+		//(function() {
+		//	"use strict";
+
+			
+		  function configOld() {
 
 			Array.from(document.getElementsByClassName("play")).forEach( (e) => e.addEventListener("click", function(event) {
 				event.preventDefault();
@@ -308,7 +313,7 @@ func ServePlaylist(library map[string]string) {
 					method: "POST",
 				});
 			}, false));
-			
+
 			window.setInterval(function() {
 				fetch('/playlist/')
 				.catch(function(e) {
@@ -347,8 +352,73 @@ func ServePlaylist(library map[string]string) {
 					}
 				});
 			}, 100);
-		})();
+		  }
+		//})();
+
+		window.addEventListener("load", function(evt) {
+			var output = document.getElementById("output");
+			var input = document.getElementById("input");
+			var ws;
+			var print = function(message) {
+				var d = document.createElement("div");
+				d.innerHTML = message;
+				output.appendChild(d);
+			};
+			document.getElementById("open").onclick = function(evt) {
+				if (ws) {
+					return false;
+				}
+				ws = new WebSocket("{{.}}");
+				ws.onopen = function(evt) {
+					print("OPEN");
+				}
+				ws.onclose = function(evt) {
+					print("CLOSE");
+					ws = null;
+				}
+				ws.onmessage = function(evt) {
+					print("RESPONSE: " + evt.data);
+				}
+				ws.onerror = function(evt) {
+					print("ERROR: " + evt.data);
+				}
+				return false;
+			};
+			document.getElementById("send").onclick = function(evt) {
+				if (!ws) {
+					return false;
+				}
+				print("SEND: " + input.value);
+				ws.send(input.value);
+				return false;
+			};
+			document.getElementById("close").onclick = function(evt) {
+				if (!ws) {
+					return false;
+				}
+				ws.close();
+				return false;
+			};
+		});
+		
 		</script>
+
+		<table>
+<tr><td valign="top" width="50%">
+<p>Click "Open" to create a connection to the server, 
+"Send" to send a message to the server and "Close" to close the connection. 
+You can change the message and send multiple times.
+<p>
+<form>
+<button id="open">Open</button>
+<button id="close">Close</button>
+<p><input id="input" type="text" value="Hello world!">
+<button id="send">Send</button>
+</form>
+</td><td valign="top" width="50%">
+<div id="output"></div>
+</td></tr></table>
+
 		</body>
 		</html>`)
 	})
@@ -366,10 +436,110 @@ func ServePlaylist(library map[string]string) {
 	fs := http.FileServer(http.Dir("sounds"))
 	http.Handle("/sounds/", http.StripPrefix("/sounds/", fs))
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	flag.Parse()
+	log.SetFlags(0)
+	// http.HandleFunc("/echo", echo)
+	//http.HandleFunc("/", home)
+	log.Fatal(http.ListenAndServe(*addr, nil))
+
+	//log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+var addr = flag.String("addr", "localhost:8080", "http service address")
+
+/*func echo(w http.ResponseWriter, r *http.Request) {
+	c, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Print("upgrade:", err)
+		return
+	}
+	defer c.Close()
+	for {
+		mt, message, err := c.ReadMessage()
+		if err != nil {
+			log.Println("read:", err)
+			break
+		}
+		log.Printf("recv: %s", message)
+
+		trackuri, ok := playlist.TrackLibrary[string(message)]
+		if !ok {
+			log.Print("invalid track selection:", message)
+			continue
+		}
+		err = c.WriteMessage(mt, []byte(trackuri))
+		if err != nil {
+			log.Println("write:", err)
+			break
+		}
+	}
+}*/
+
+var playlist *Playlist
+
 func main() {
+	bb, err := ioutil.ReadFile("sounds.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var resources map[string]string
+	json.Unmarshal(bb, &resources)
+	log.Println("Initializing with the following resources:", resources)
+
+	library := resources
+	playlist = NewPlaylist(library, defaultExpireSeconds)
+
+	flag.Parse()
+	hub := newHub()
+	go hub.run()
+	http.HandleFunc("/", serveHome)
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		serveWs(hub, w, r)
+	})
+	// TODO: remove from final product--->
+	fs := http.FileServer(http.Dir("sounds"))
+	http.Handle("/sounds/", http.StripPrefix("/sounds/", fs))
+	// <<<<<----
+	err = http.ListenAndServe(*addr, nil)
+	if err != nil {
+		log.Fatal("ListenAndServe: ", err)
+	}
+
+	//flag.Parse()
+	//log.SetFlags(0)
+	//http.HandleFunc("/echo", echo)
+	//http.HandleFunc("/", home)
+	//log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+func serveHome(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
+	if r.URL.Path != "/" {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	home(w, r)
+	//http.ServeFile(w, r, "home.html")
+}
+
+func home(w http.ResponseWriter, r *http.Request) {
+	data := struct {
+		Url      string
+		Commands []string
+	}{
+		// TODO: allow connecting to arbitrary sound machines!
+		//Url:      "ws://" + r.Host + "/ws",
+		Commands: playlist.Commands(),
+	}
+	homeTemplate.Execute(w, data)
+}
+
+func main2() {
 	bb, err := ioutil.ReadFile("sounds.json")
 	if err != nil {
 		log.Fatal(err)
@@ -392,3 +562,276 @@ func main() {
 
 	ServePlaylist(resources)
 }
+
+var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Chat Example</title>
+<script type="text/javascript">
+window.onload = function () {
+    var conn;
+    var msg = document.getElementById("msg");
+    var log = document.getElementById("log");
+
+    function appendLog(item) {
+        var doScroll = log.scrollTop > log.scrollHeight - log.clientHeight - 1;
+        log.appendChild(item);
+        if (doScroll) {
+            log.scrollTop = log.scrollHeight - log.clientHeight;
+        }
+    }
+
+    document.getElementById("form").onsubmit = function () {
+        if (!conn) {
+            return false;
+        }
+        if (!msg.value) {
+            return false;
+        }
+        conn.send(msg.value);
+        msg.value = "";
+        return false;
+    };
+
+	
+	////>>
+	Array.from(document.getElementsByClassName("play")).forEach( (e) => e.addEventListener("click", function(event) {
+		event.preventDefault();
+		if (!conn) {
+			return false;
+		}
+		console.log("SEND: " + e.dataset.sound);
+		conn.send(e.dataset.sound);
+		return false;
+	}, false));
+	////<<
+
+    if (window["WebSocket"]) {
+		conn = new WebSocket("ws://" + document.location.host + "/ws");
+
+        conn.onclose = function (evt) {
+            var item = document.createElement("div");
+            item.innerHTML = "<b>Connection closed.</b>";
+            //appendLog(item);
+        };
+        conn.onmessage = function (evt) {
+			var messages = evt.data.split('\n');
+
+            for (var i = 0; i < messages.length; i++) {
+
+				var rsrc = "/sounds/" + messages[i] + ".mp3";
+			var audio = sounds.querySelector('[src="' + rsrc + '"]');
+			if (audio == null) {
+				audio = new Audio(rsrc);
+				sounds.appendChild(audio);
+			}
+			try {
+			audio.play();
+			} catch (err) {
+				console.log("Could not play sound: " + err)
+			}
+
+               // var item = document.createElement("div");
+                //item.innerText = messages[i];
+                //appendLog(item);
+            }
+        };
+    } else {
+        var item = document.createElement("div");
+        item.innerHTML = "<b>Your browser does not support WebSockets.</b>";
+        //appendLog(item);
+    }
+};
+</script>
+<style type="text/css">
+body {
+	background-color: #333;
+	color: #ccc;
+}
+
+#selections {
+	padding-left: 0;
+}
+
+#selections .selection {
+	display: inline-block;
+	padding: .25em .5em;
+}
+
+#selections .play {
+	color: #8f8;
+}
+
+/*html {
+    overflow: hidden;
+}
+
+body {
+    overflow: hidden;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: gray;
+}
+
+#log {
+    background: white;
+    margin: 0;
+    padding: 0.5em 0.5em 0.5em 0.5em;
+    position: absolute;
+    top: 0.5em;
+    left: 0.5em;
+    right: 0.5em;
+    bottom: 3em;
+    overflow: auto;
+}
+
+#form {
+    padding: 0 0.5em 0 0.5em;
+    margin: 0;
+    position: absolute;
+    bottom: 1em;
+    left: 0px;
+    width: 100%;
+    overflow: hidden;
+}*/
+
+</style>
+</head>
+<body>
+<div id="log"></div>
+<form id="form">
+    <input type="submit" value="Send" />
+    <input type="text" id="msg" size="64"/>
+</form>
+<div id="sounds"></div>
+<ul id="selections">
+{{range .Commands }}
+ <li class="selection">
+	<a class="play" data-sound="{{.}}" href="#">{{.}}</a>
+ </li>
+{{end}}
+</ul>
+</body>
+</html>`))
+
+var homeTemplate2 = template.Must(template.New("").Parse(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+			body {
+				background-color: #333;
+				color: #ccc;
+			}
+
+			#selections {
+				padding-left: 0;
+			}
+
+			#selections .selection {
+				display: inline-block;
+				padding: .25em .5em;
+			}
+
+			#selections .play {
+				color: #8f8;
+			}
+		</style>
+<script>  
+window.addEventListener("load", function(evt) {
+    var output = document.getElementById("output");
+    var input = document.getElementById("input");
+    var ws;
+    var print = function(message) {
+        var d = document.createElement("div");
+        d.innerHTML = message;
+        output.appendChild(d);
+    };
+    document.getElementById("open").onclick = function(evt) {
+        if (ws) {
+            return false;
+        }
+        ws = new WebSocket("{{.Url}}");
+        ws.onopen = function(evt) {
+            print("OPEN");
+        }
+        ws.onclose = function(evt) {
+            print("CLOSE");
+            ws = null;
+        }
+        ws.onmessage = function(evt) {
+			print("RESPONSE: " + evt.data);
+			/////>>
+			var rsrc = evt.data;
+			var audio = sounds.querySelector('[src="' + rsrc + '"]');
+			if (audio == null) {
+				audio = new Audio(rsrc);
+				sounds.appendChild(audio);
+			}
+			audio.play();
+
+			/////<<
+        }
+        ws.onerror = function(evt) {
+            print("ERROR: " + evt.data);
+        }
+        return false;
+	};
+	Array.from(document.getElementsByClassName("play")).forEach( (e) => e.addEventListener("click", function(event) {
+		event.preventDefault();
+		if (!ws) {
+            return false;
+		}
+		input.value = e.dataset.sound;
+        print("SEND: " + input.value);
+        ws.send(input.value);
+        return false;
+	}, false));
+    document.getElementById("send").onclick = function(evt) {
+        if (!ws) {
+            return false;
+        }
+        print("SEND: " + input.value);
+        ws.send(input.value);
+        return false;
+    };
+    document.getElementById("close").onclick = function(evt) {
+        if (!ws) {
+            return false;
+        }
+        ws.close();
+        return false;
+    };
+});
+</script>
+</head>
+<body>
+<div id="sounds"></div>
+<ul id="selections">
+{{range .Commands }}
+ <li class="selection">
+	<a class="play" data-sound="{{.}}" href="#">{{.}}</a>
+ </li>
+{{end}}
+</ul>
+<table>
+<tr><td valign="top" width="50%">
+<p>Click "Open" to create a connection to the server, 
+"Send" to send a message to the server and "Close" to close the connection. 
+You can change the message and send multiple times.
+<p>
+<form>
+<button id="open">Open</button>
+<button id="close">Close</button>
+<p><input id="input" type="text" value="Hello world!">
+<button id="send">Send</button>
+</form>
+</td><td valign="top" width="50%">
+<div id="output"></div>
+</td></tr></table>
+</body>
+</html>
+`))
