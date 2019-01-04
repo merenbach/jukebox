@@ -1,3 +1,4 @@
+// Most of the code in this file...
 // Copyright 2018 Andrew Merenbach
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,6 +13,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Other portions...
+// Copyright 2013 The Gorilla WebSocket Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 // TODO: emoji responses? handles for participants?
 // TODO: replace Track nomenclature
 // TODO: revamp fault tolerance (invalid sound, etc.)
@@ -19,9 +25,9 @@
 // TODO: Lambda to run? Accept URI for sound library...
 // TODO: different rooms, namespaced to allow multiple "conversations"
 // TODO: don't allow concurrent playback--can we make browser wait for playback to finish?
-// TODO: rename to "Sound Machine"?
 // TODO: Slack integration
-// TODO: client API, or poss. dedicated client app? (API is probably more universally compatible and useful)
+// TODO: dedicated client app to submit?
+// NOTE: portions based heavily on https://github.com/gorilla/websocket/tree/master/examples/chat
 
 package main
 
@@ -32,6 +38,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"path"
 )
 
 /*
@@ -150,6 +157,8 @@ func (eq *EventQueue) Filtered() []Event {
 
 var addr = flag.String("addr", "localhost:8080", "http service address")
 
+//var addr = flag.String("addr", ":8080", "http service address")
+
 /*func echo(w http.ResponseWriter, r *http.Request) {
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -196,6 +205,18 @@ func main() {
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
+	// TODO: improve this....
+	http.HandleFunc("/play/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "{}", http.StatusMethodNotAllowed)
+			return
+		}
+
+		resourceName := path.Base(r.URL.Path)
+		log.Println("Requested to play sound:", resourceName)
+		hub.broadcast <- []byte(resourceName)
+	})
+	// <<----
 	// TODO: remove from final product--->
 	fs := http.FileServer(http.Dir("sounds"))
 	http.Handle("/sounds/", http.StripPrefix("/sounds/", fs))
@@ -240,7 +261,7 @@ func home(w http.ResponseWriter, r *http.Request) {
 var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<title>Chat Example</title>
+<title>Sound Machine</title>
 <script type="text/javascript">
 window.onload = function () {
     var conn;
@@ -266,10 +287,9 @@ window.onload = function () {
         msg.value = "";
         return false;
     };*/
-
 	
 	////>>
-	Array.from(document.getElementsByClassName("play")).forEach( (e) => e.addEventListener("click", function(event) {
+	Array.from(document.getElementsByClassName("play")).forEach( (e) => e.onclick = function(event) {
 		event.preventDefault();
 		if (!conn) {
 			return false;
@@ -277,7 +297,7 @@ window.onload = function () {
 		console.log("SEND: " + e.dataset.sound);
 		conn.send(e.dataset.sound);
 		return false;
-	}, false));
+	});
 	////<<
 
     if (window["WebSocket"]) {
@@ -349,11 +369,13 @@ body {
     width: 100%;
     height: 100%;
     background: gray;
-}
+}*/
 
 </style>
 </head>
 <body>
+<h1>Sound Machine</h1>
+<p>Click on a sound below to play it for all connected clients!</p>
 <ul id="selections">
 {{range $k, $v := .Commands }}
  <li class="selection">
