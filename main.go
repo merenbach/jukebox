@@ -19,7 +19,6 @@
 // license that can be found in the LICENSE file.
 
 // TODO: emoji responses? handles for participants?
-// TODO: replace Track nomenclature
 // TODO: revamp fault tolerance (invalid sound, etc.)
 // TODO: better log/history display in browser, plus status messages about joins/leaves--and don't try to play those...
 // TODO: Lambda to run? Accept URI for sound library...
@@ -28,6 +27,7 @@
 // TODO: dedicated client app to submit?
 // NOTE: portions based heavily on https://github.com/gorilla/websocket/tree/master/examples/chat
 // TODO: allow refreshing of list if remote manifest updated??
+// TODO: remove trailing /ws if we can switch to Heroku for POC
 
 package main
 
@@ -66,7 +66,7 @@ func main() {
 	var library map[string]string
 
 	http.HandleFunc("/", serveHome)
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
 	// TODO: improve this....
@@ -121,7 +121,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	homeTemplate.Execute(w, "ws://"+r.Host+"/ws")
+	homeTemplate.Execute(w, "ws://"+r.Host+"/ws/")
 }
 
 var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
@@ -132,7 +132,10 @@ var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
 (function() {
 "use strict";
 window.onload = function () {
-    var conn;
+const launch = document.getElementById("launch");
+  launch.onclick = function() {
+	  launch.style.display = 'none';
+	var conn;
     //var msg = document.getElementById("msg");
     var log = document.getElementById("log");
 
@@ -187,7 +190,8 @@ window.onload = function () {
 				}
 			);
 	    });
-
+console.log("audio elements = " + JSON.stringify(audioElements));
+console.log(audioElements);
 	var player = function() {
 		var currentTrack = false;
 		var queue = []; // TODO: const?
@@ -251,7 +255,8 @@ window.onload = function () {
         var item = document.createElement("div");
         item.innerHTML = "<b>Your browser does not support WebSockets.</b>";
         appendLog(item);
-    }
+	}
+  };
 };
 }());
 </script>
@@ -291,5 +296,6 @@ body {
 <p>Click on a sound below to play it for all connected clients!</p>
 <div id="sounds"></div>
 <div id="log"></div>
+<button id="launch">Launch</button>
 </body>
 </html>`))
