@@ -32,27 +32,29 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
+	"fmt"
 	"html/template"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"path"
-	"strings"
 )
 
 var addr = flag.String("addr", "localhost:8080", "http service address")
 var manifest = flag.String("manifest", "", "URL of sound library JSON")
 
-// // GetRemoteFile reads the contents of a file from a remote URL.
-// func getRemoteFile(url string) ([]byte, error) {
-// 	resp, err := http.Get(url)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-//
-// 	defer func() { _ = resp.Body.Close() }()
-// 	return ioutil.ReadAll(resp.Body)
-//}
+// GetRemoteFile reads the contents of a file from a remote URL.
+func getRemoteFile(url string) ([]byte, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+	return ioutil.ReadAll(resp.Body)
+}
 
 func main() {
 	flag.Parse()
@@ -61,10 +63,7 @@ func main() {
 
 	log.Println("Initializing with address: ", *addr)
 	log.Println("Initializing with manifest: ", *manifest)
-	if strings.HasPrefix(*manifest, "/") {
-		*manifest = path.Join(*addr, *manifest)
-		log.Println("Adjusting manifest to: ", *manifest)
-	}
+	var library map[string]string
 
 	http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +72,20 @@ func main() {
 	// TODO: improve this....
 	http.HandleFunc("/play/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			http.Redirect(w, r, *manifest, http.StatusSeeOther)
+			if library == nil {
+				bb, err := getRemoteFile(*manifest)
+				if err != nil {
+					log.Fatal(err)
+				}
+				if err = json.Unmarshal(bb, &library); err != nil {
+					log.Fatal(err)
+				}
+			}
+			bb, err := json.Marshal(library)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Fprintf(w, "%s", bb)
 			return
 		}
 
