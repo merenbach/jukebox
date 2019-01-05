@@ -251,6 +251,7 @@ var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
 <head>
 <title>Sound Machine</title>
 <script type="text/javascript">
+"use strict";
 window.onload = function () {
     var conn;
     //var msg = document.getElementById("msg");
