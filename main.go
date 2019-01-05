@@ -27,185 +27,56 @@
 // TODO: Slack integration
 // TODO: dedicated client app to submit?
 // NOTE: portions based heavily on https://github.com/gorilla/websocket/tree/master/examples/chat
+// TODO: allow refreshing of list if remote manifest updated??
 
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"html/template"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"path"
+	"strings"
 )
 
-/*
-// Filtered events from the queue.
-func (eq *EventQueue) Filtered() []Event {
-	var out []Event
-	eq.selectionsLock.RLock()
-	for i, e := range eq.Events {
-		if e.newerThan(int64(eq.Timeout)) {
-			out = eq.Events[i:]
-			break
-		}
-	}
-	eq.selectionsLock.RUnlock()
-	if out == nil {
-		out = []Event{}
-	}
-	return out
-}*/
-
-// ServePlaylist runs an HTTP server with a playlist queue.
-/*func ServePlaylist(library map[string]string) {
-
-	playlist := NewPlaylist(library, defaultExpireSeconds)
-
-	// [TODO]: Replace with a minute instead?
-	go func(p *Playlist) {
-		ticker := time.NewTicker(time.Second * defaultExpireSeconds)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			p.Prune()
-		}
-	}(playlist)
-
-	http.HandleFunc("/library/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "{}", http.StatusMethodNotAllowed)
-			return
-		}
-
-		bb, err := json.Marshal(playlist.TrackLibrary)
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Fprintf(w, "%s", bb)
-		return
-	})
-
-	http.HandleFunc("/play/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "{}", http.StatusMethodNotAllowed)
-			return
-		}
-
-		resourceName := path.Base(r.URL.Path)
-		log.Println("Requested to play track:", resourceName)
-
-		t := playlist.Append(resourceName)
-		if t == "" {
-			http.NotFound(w, r)
-			return
-		}
-
-		bb, err := json.Marshal(t)
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Fprintf(w, "%s", bb)
-	})
-
-	http.HandleFunc("/playlist/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "{}", http.StatusMethodNotAllowed)
-			return
-		}
-
-		ts, sels := playlist.Selections()
-		playlistData := struct {
-			Timestamp  int64    `json:"timestamp"`
-			Selections []string `json:"selections"`
-		}{
-			Timestamp:  ts,
-			Selections: sels,
-		}
-		bb, err := json.Marshal(playlistData)
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Fprintf(w, "%s", bb)
-	})
-
-	//<link href="https://necolas.github.io/normalize.css/8.0.1/normalize.css" rel="stylesheet">
-
-	// TODO: set timeouts, max header bytes!
-	// s := &http.Server{
-	// 	Addr:           ":8080",
-	// 	Handler:        myHandler,
-	// 	ReadTimeout:    10 * time.Second,
-	// 	WriteTimeout:   10 * time.Second,
-	// 	MaxHeaderBytes: 1 << 20,
-	// }
-	// log.Fatal(s.ListenAndServe())
-
-	fs := http.FileServer(http.Dir("sounds"))
-	http.Handle("/sounds/", http.StripPrefix("/sounds/", fs))
-
-	flag.Parse()
-	log.SetFlags(0)
-	// http.HandleFunc("/echo", echo)
-	//http.HandleFunc("/", home)
-	log.Fatal(http.ListenAndServe(*addr, nil))
-
-	//log.Fatal(http.ListenAndServe(":8080", nil))
-}*/
-
 var addr = flag.String("addr", "localhost:8080", "http service address")
+var manifest = flag.String("manifest", "", "URL of sound library JSON")
 
-//var addr = flag.String("addr", ":8080", "http service address")
-
-/*func echo(w http.ResponseWriter, r *http.Request) {
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Print("upgrade:", err)
-		return
-	}
-	defer c.Close()
-	for {
-		mt, message, err := c.ReadMessage()
-		if err != nil {
-			log.Println("read:", err)
-			break
-		}
-		log.Printf("recv: %s", message)
-
-		trackuri, ok := playlist.TrackLibrary[string(message)]
-		if !ok {
-			log.Print("invalid track selection:", message)
-			continue
-		}
-		err = c.WriteMessage(mt, []byte(trackuri))
-		if err != nil {
-			log.Println("write:", err)
-			break
-		}
-	}
-}*/
-
-var playlistLibrary map[string]string
+// // GetRemoteFile reads the contents of a file from a remote URL.
+// func getRemoteFile(url string) ([]byte, error) {
+// 	resp, err := http.Get(url)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+//
+// 	defer func() { _ = resp.Body.Close() }()
+// 	return ioutil.ReadAll(resp.Body)
+//}
 
 func main() {
-	bb, err := ioutil.ReadFile("sounds.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	json.Unmarshal(bb, &playlistLibrary)
-	log.Println("Initializing with the following resources:", playlistLibrary)
-
 	flag.Parse()
 	hub := newHub()
 	go hub.run()
+
+	log.Println("Initializing with address: ", *addr)
+	log.Println("Initializing with manifest: ", *manifest)
+	if strings.HasPrefix(*manifest, "/") {
+		*manifest = path.Join(*addr, *manifest)
+		log.Println("Adjusting manifest to: ", *manifest)
+	}
+
 	http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
 	// TODO: improve this....
 	http.HandleFunc("/play/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			http.Redirect(w, r, *manifest, http.StatusSeeOther)
+			return
+		}
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -220,7 +91,7 @@ func main() {
 	fs := http.FileServer(http.Dir("sounds"))
 	http.Handle("/sounds/", http.StripPrefix("/sounds/", fs))
 	// <<<<<----
-	err = http.ListenAndServe(*addr, nil)
+	err := http.ListenAndServe(*addr, nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
@@ -238,12 +109,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	homeTemplate.Execute(w, struct {
-		Library map[string]string
-	}{
-		//Url:      "ws://" + r.Host + "/ws",
-		Library: playlistLibrary,
-	})
+	homeTemplate.Execute(w, "ws://"+r.Host+"/ws")
 }
 
 var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
@@ -266,19 +132,49 @@ window.onload = function () {
         }*/
     }
 
-    /*document.getElementById("form").onsubmit = function () {
-        if (!conn) {
-            return false;
-        }
-        if (!msg.value) {
-            return false;
-        }
-        conn.send(msg.value);
-        msg.value = "";
-        return false;
-    };*/
-	
 	var audioElements = {};
+
+	fetch('/play/')
+	   	.catch(function(e) {
+	        console.log(e);
+	   	})
+	   	.then(function(response) {
+	        if (response.ok) {
+	            return response.json();
+	        }
+	        throw new Error(response.statusText);
+	   	})
+	   	.catch(function(e) {
+	        console.log(e);
+	   	})
+	   	.then(function(obj) {
+			const sounds = document.getElementById("sounds");
+			Object.entries(obj).forEach(
+				([key, value]) => {
+					console.log(key, value);
+					const audio = new Audio(value);
+					audio.preload = 'auto';
+					sounds.appendChild(audio);
+
+					audioElements[key] = audio;
+
+					const button = document.createElement('a');
+					button.href = '#';
+					button.innerHTML = key;
+					sounds.appendChild(button);
+					button.onclick = function(event) {
+						event.preventDefault();
+						if (!conn) {
+							return false;
+						}
+
+						console.log("SEND: " + key);
+						conn.send(key);
+						return false;
+					};
+				}
+			);
+	    });
 
 	var player = function() {
 		var currentTrack = false;
@@ -290,7 +186,7 @@ window.onload = function () {
 		function next() {
 			if (!currentTrack && queue.length > 0) {
 				const nextTrack = queue.shift();
-				console.log("Playing next: " + nextTrack);
+				console.log("PLAY: " + nextTrack);
 				const audio = audioElements[nextTrack];
 				audio.onplay = function() {
 					currentTrack = audio;
@@ -320,25 +216,8 @@ window.onload = function () {
 	}();
 	var queueTrack = player.append;
 	
-	////>>
-	const selections = document.getElementById('selections');
-	Array.from(document.getElementsByClassName("play")).forEach( (e) => e.onclick = function(event) {
-		event.preventDefault();
-		if (!conn) {
-			return false;
-		}
-		var audio = selections.querySelector('audio[data-sound="' + e.dataset.sound + '"]');
-
-		audioElements[e.dataset.sound] = audio;
-		
-		console.log("SEND: " + e.dataset.sound);
-		conn.send(e.dataset.sound);
-		return false;
-	});
-	////<<
-	
     if (window["WebSocket"]) {
-		conn = new WebSocket("ws://" + document.location.host + "/ws");
+		conn = new WebSocket("{{.}}");
 
         conn.onclose = function (evt) {
             var item = document.createElement("div");
@@ -370,16 +249,13 @@ body {
 	color: #ccc;
 }
 
-#selections {
+#sounds {
 	padding-left: 0;
 }
 
-#selections .selection {
+#sounds a {
 	display: inline-block;
 	padding: .25em .5em;
-}
-
-#selections .play {
 	color: #8f8;
 }
 
@@ -401,14 +277,7 @@ body {
 <body>
 <h1>Sound Machine</h1>
 <p>Click on a sound below to play it for all connected clients!</p>
-<ul id="selections">
-{{range $k, $v := .Library}}
-  <li class="selection">
-	<a class="play" data-sound="{{$k}}" href="#">{{$k}}</a>
-	<audio preload="auto" src="{{$v}}" data-sound="{{$k}}">Your browser does not support the <code>audio</code> element.</audio>
-  </li>
-{{end}}
-</ul>
+<div id="sounds"></div>
 <div id="log"></div>
 </body>
 </html>`))
