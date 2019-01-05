@@ -207,7 +207,7 @@ func main() {
 	// TODO: improve this....
 	http.HandleFunc("/play/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "{}", http.StatusMethodNotAllowed)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -225,10 +225,6 @@ func main() {
 		log.Fatal("ListenAndServe: ", err)
 	}
 
-	//flag.Parse()
-	//log.SetFlags(0)
-	//http.HandleFunc("/echo", echo)
-	//http.HandleFunc("/", home)
 	//log.Fatal(http.ListenAndServe(*addr, nil))
 }
 
@@ -242,19 +238,12 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	home(w, r)
-	//http.ServeFile(w, r, "home.html")
-}
-
-func home(w http.ResponseWriter, r *http.Request) {
-	data := struct {
-		Commands map[string]string
+	homeTemplate.Execute(w, struct {
+		Library map[string]string
 	}{
-		// TODO: allow connecting to arbitrary sound machines!
 		//Url:      "ws://" + r.Host + "/ws",
-		Commands: playlistLibrary,
-	}
-	homeTemplate.Execute(w, data)
+		Library: playlistLibrary,
+	})
 }
 
 var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
@@ -400,11 +389,11 @@ body {
 <h1>Sound Machine</h1>
 <p>Click on a sound below to play it for all connected clients!</p>
 <ul id="selections">
-{{range $k, $v := .Commands }}
- <li class="selection">
+{{range $k, $v := .Library}}
+  <li class="selection">
 	<a class="play" data-sound="{{$k}}" href="#">{{$k}}</a>
 	<audio preload="auto" src="{{$v}}" data-sound="{{$k}}">Your browser does not support the <code>audio</code> element.</audio>
- </li>
+  </li>
 {{end}}
 </ul>
 <div id="log"></div>
