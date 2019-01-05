@@ -251,6 +251,7 @@ var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
 <head>
 <title>Sound Machine</title>
 <script type="text/javascript">
+(function() {
 "use strict";
 window.onload = function () {
     var conn;
@@ -277,39 +278,64 @@ window.onload = function () {
         return false;
     };*/
 	
+	var audioElements = {};
+
+	var player = function() {
+		var currentTrack = false;
+		var queue = []; // TODO: const?
+
+		function append(t) {
+			queue.push(t);
+		}
+		function next() {
+			if (!currentTrack && queue.length > 0) {
+				const nextTrack = queue.shift();
+				console.log("Playing next: " + nextTrack);
+				const audio = audioElements[nextTrack];
+				audio.onplay = function() {
+					currentTrack = audio;
+				}
+				audio.onended = function() {
+					currentTrack = false;
+				}
+				audio.play();
+			}
+		}
+
+		/*function stop() {
+			if (currentTrack) {
+				currentTrack.pause();
+				currentTrack.currentTime = 0;
+				currentTrack = false;
+			}
+		}*/
+		
+		window.setInterval(function() {
+			next();
+		}, 100);
+
+		return {
+			append: append,
+		};
+	}();
+	var queueTrack = player.append;
+	
 	////>>
+	const selections = document.getElementById('selections');
 	Array.from(document.getElementsByClassName("play")).forEach( (e) => e.onclick = function(event) {
 		event.preventDefault();
 		if (!conn) {
 			return false;
 		}
+		var audio = selections.querySelector('audio[data-sound="' + e.dataset.sound + '"]');
+
+		audioElements[e.dataset.sound] = audio;
+		
 		console.log("SEND: " + e.dataset.sound);
 		conn.send(e.dataset.sound);
 		return false;
 	});
 	////<<
-
-
-	var PLAY_QUEUE = [];
-	var PLAYING = false;
-
-	window.setInterval(function() {
-		if (!PLAYING && PLAY_QUEUE.length > 0) {
-			var NEXT_UP = PLAY_QUEUE.shift();
-			console.log("Okay, NEXT UP is: " + NEXT_UP);
-			const selections = document.getElementById('selections');
-			var audio = selections.querySelector('audio[data-sound="' + NEXT_UP + '"]');
-			if (audio != null) {
-				audio.onplay = function() {
-					PLAYING = true;
-				}
-				audio.onended = function() {
-					PLAYING = false;
-				}
-				audio.play();
-			}
-		}
-	}, 100);
 	
     if (window["WebSocket"]) {
 		conn = new WebSocket("ws://" + document.location.host + "/ws");
@@ -323,23 +349,8 @@ window.onload = function () {
 			var messages = evt.data.split('\n');
 
             for (var i = 0; i < messages.length; i++) {
-
-				var rsrc = messages[i];
-				PLAY_QUEUE.push(rsrc);
+				queueTrack(messages[i]);
 				
-			// const selections = document.getElementById('selections');
-			// var audio = selections.querySelector('audio[data-sound="' + rsrc + '"]');
-			/*if (audio == null) {
-				audio = new Audio(rsrc);
-				sounds.appendChild(audio);
-			}*/
-			// audio.play();
-			/*try {
-			audio.play();
-			} catch (err) {
-				console.log("Could not play sound: " + err)
-			}*/
-
                 var item = document.createElement("div");
                 item.innerText = messages[i];
                 appendLog(item);
@@ -351,6 +362,7 @@ window.onload = function () {
         appendLog(item);
     }
 };
+}());
 </script>
 <style type="text/css">
 body {
