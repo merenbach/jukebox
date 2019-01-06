@@ -40,6 +40,7 @@ import (
 	"log"
 	"net/http"
 	"path"
+	"path/filepath"
 )
 
 var addr = flag.String("addr", "localhost:8080", "http service address")
@@ -66,7 +67,7 @@ func main() {
 	var library map[string]string
 
 	http.HandleFunc("/", serveHome)
-	http.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
 	// TODO: improve this....
@@ -100,8 +101,8 @@ func main() {
 	})
 	// <<----
 	// TODO: remove from final product--->
-	fs := http.FileServer(http.Dir("sounds"))
-	http.Handle("/sounds/", http.StripPrefix("/sounds/", fs))
+	fs := http.FileServer(http.Dir("static"))
+	http.Handle("/static/", http.StripPrefix("/static/", fs))
 	// <<<<<----
 	err := http.ListenAndServe(*addr, nil)
 	if err != nil {
@@ -121,181 +122,25 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	homeTemplate.Execute(w, "ws://"+r.Host+"/ws/")
+
+	/*p := &Page{
+		Title: "You are invited",
+		Event: myEvent,
+		Group: *myEvent.groupForToken(token),
+	}*/
+	//fmt.Fprintf(w, "<h1>%s</h1><div>%s</div>", p.Title, p.Body)
+	renderHTMLTemplate(w, "main")
+
+	//homeTemplate.Execute(w, "ws://"+r.Host+"/ws/")
 }
 
-var homeTemplate = template.Must(template.New("").Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<title>Sound Machine</title>
-<script type="text/javascript">
-(function() {
-"use strict";
-window.onload = function () {
-const launch = document.getElementById("launch");
-  launch.onclick = function() {
-	  launch.style.display = 'none';
-	var conn;
-    //var msg = document.getElementById("msg");
-    var log = document.getElementById("log");
-
-    function appendLog(item) {
-        //var doScroll = log.scrollTop > log.scrollHeight - log.clientHeight - 1;
-        log.appendChild(item);
-        /*if (doScroll) {
-            log.scrollTop = log.scrollHeight - log.clientHeight;
-        }*/
-    }
-
-	var audioElements = {};
-
-	fetch('/play/')
-	   	.catch(function(e) {
-	        console.log(e);
-	   	})
-	   	.then(function(response) {
-	        if (response.ok) {
-	            return response.json();
-	        }
-	        throw new Error(response.statusText);
-	   	})
-	   	.catch(function(e) {
-	        console.log(e);
-	   	})
-	   	.then(function(obj) {
-			const sounds = document.getElementById("sounds");
-			Object.entries(obj).forEach(
-				([key, value]) => {
-					console.log(key, value);
-					const audio = new Audio(value);
-					audio.preload = 'auto';
-					sounds.appendChild(audio);
-
-					audioElements[key] = audio;
-
-					const button = document.createElement('a');
-					button.href = '#';
-					button.innerHTML = key;
-					sounds.appendChild(button);
-					button.onclick = function(event) {
-						event.preventDefault();
-						if (!conn) {
-							return false;
-						}
-
-						console.log("SEND: " + key);
-						conn.send(key);
-						return false;
-					};
-				}
-			);
-	    });
-console.log("audio elements = " + JSON.stringify(audioElements));
-console.log(audioElements);
-	var player = function() {
-		var currentTrack = false;
-		var queue = []; // TODO: const?
-
-		function append(t) {
-			queue.push(t);
-		}
-		function next() {
-			if (!currentTrack && queue.length > 0) {
-				const nextTrack = queue.shift();
-				console.log("PLAY: " + nextTrack);
-				const audio = audioElements[nextTrack];
-				audio.onplay = function() {
-					currentTrack = audio;
-				}
-				audio.onended = function() {
-					currentTrack = false;
-				}
-				audio.play();
-			}
-		}
-
-		/*function stop() {
-			if (currentTrack) {
-				currentTrack.pause();
-				currentTrack.currentTime = 0;
-				currentTrack = false;
-			}
-		}*/
-		
-		window.setInterval(function() {
-			next();
-		}, 100);
-
-		return {
-			append: append,
-		};
-	}();
-	var queueTrack = player.append;
-	
-    if (window["WebSocket"]) {
-		conn = new WebSocket("{{.}}");
-
-        conn.onclose = function (evt) {
-            var item = document.createElement("div");
-            item.innerHTML = "<b>Connection closed.</b>";
-            appendLog(item);
-        };
-        conn.onmessage = function (evt) {
-			var messages = evt.data.split('\n');
-
-            for (var i = 0; i < messages.length; i++) {
-				queueTrack(messages[i]);
-				
-                var item = document.createElement("div");
-                item.innerText = messages[i];
-                appendLog(item);
-            }
-        };
-    } else {
-        var item = document.createElement("div");
-        item.innerHTML = "<b>Your browser does not support WebSockets.</b>";
-        appendLog(item);
+func renderHTMLTemplate(w http.ResponseWriter, tmpl string) {
+	layoutPath := filepath.Join("templates", "layout.html")
+	bodyPath := filepath.Join("templates", tmpl+".html")
+	t := template.Must(template.ParseFiles(layoutPath, bodyPath))
+	if err := t.Execute(w, ""); err != nil {
+		log.Fatal("An error occurred: ", err)
 	}
-  };
-};
-}());
-</script>
-<style type="text/css">
-body {
-	background-color: #333;
-	color: #ccc;
 }
 
-#sounds {
-	padding-left: 0;
-}
-
-#sounds a {
-	display: inline-block;
-	padding: .25em .5em;
-	color: #8f8;
-}
-
-/*html {
-    overflow: hidden;
-}
-
-body {
-    overflow: hidden;
-    padding: 0;
-    margin: 0;
-    width: 100%;
-    height: 100%;
-    background: gray;
-}*/
-
-</style>
-</head>
-<body>
-<h1>Sound Machine</h1>
-<p>Click on a sound below to play it for all connected clients!</p>
-<div id="sounds"></div>
-<div id="log"></div>
-<button id="launch">Launch</button>
-</body>
-</html>`))
+//var homeTemplate = template.Must(template.New("").Parse(``))
